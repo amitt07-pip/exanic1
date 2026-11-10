@@ -15,7 +15,7 @@ systemctl daemon-reload && systemctl enable --now exanic
 
 ## Commands (escrowers in ADMIN_IDS)
 
-- `/add` — reply to a deal form:
+- `/add [received amount]` — reply to a deal form (amount optional; defaults to the form amount):
 
 ```
 Seller - @seller

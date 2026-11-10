@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 import db
 import userbot
 from config import ADMIN_IDS, BIO_TAG, BOT_TOKEN, FEE_WITH_TAG, FEE_WITHOUT_TAG
-from form import DealForm, fmt_amount, parse_form
+from form import fmt_amount, parse_form, parse_number
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -29,6 +29,7 @@ E_PARTY = emoji("5936130851635990622", "👤")
 E_AMOUNT = emoji("5992430854909989581", "💵")
 E_FEES = emoji("5913702317667913862", "💰")
 E_RELEASE = emoji("5985596818912712352", "📤")
+E_CUT = emoji("6007895992760799065", "✂️")
 
 _BIO_TAG_RE = re.compile(rf"(?<!\w){re.escape(BIO_TAG)}(?!\w)", re.IGNORECASE)
 
@@ -51,9 +52,9 @@ def deal_fee(seller: userbot.UserInfo, buyer: userbot.UserInfo) -> Decimal:
 
 def render_deal_card(
     deal_id: str, escrower_id: int, escrower_name: str,
-    seller: userbot.UserInfo, buyer: userbot.UserInfo, amount: Decimal, fee: Decimal,
+    seller: userbot.UserInfo, buyer: userbot.UserInfo, amount: Decimal, fee: Decimal, form_amount: Decimal,
 ) -> str:
-    return (
+    text = (
         f"{E_TITLE} <b>Escrow Deal [strawHats]</b>\n\n"
         f"{E_ID} <b>Deal ID</b> - <code>{deal_id}</code>\n"
         f"{E_ESCROWER} <b>Escrower</b> - {profile_link(escrower_id, escrower_name)}\n"
@@ -63,6 +64,9 @@ def render_deal_card(
         f"{E_FEES} <b>Total Fees</b> - ${fee:.2f}\n\n"
         f"{E_RELEASE} <b>${fmt_amount(amount - fee)} to be released!</b>"
     )
+    if amount < form_amount:
+        text += f"\n\n{E_CUT} Cut ${form_amount - amount:.2f} from ${fmt_amount(form_amount)}."
+    return text
 
 
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -73,8 +77,15 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     form_msg = msg.reply_to_message
     if not form_msg:
-        await msg.reply_text("Reply to a filled deal form with /add")
+        await msg.reply_text("Reply to a filled deal form with /add [received amount]")
         return
+
+    received = None
+    if context.args:
+        received = parse_number(" ".join(context.args))
+        if received is None:
+            await msg.reply_text("Usage: reply to the form with /add [received amount], e.g. /add 100")
+            return
 
     form, problems = parse_form(form_msg.text or form_msg.caption)
     if not form:
@@ -100,7 +111,8 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     fee = deal_fee(seller, buyer)
-    if form.amount <= fee:
+    amount = received if received is not None else form.amount
+    if amount <= fee:
         await msg.reply_text(f"Amount must be more than the ${fee:.2f} fee.")
         return
 
@@ -115,14 +127,15 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         buyer_username=buyer.username,
         buyer_id=buyer.id,
         buyer_name=buyer.first_name,
-        amount=str(form.amount),
+        amount=str(amount),
+        form_amount=str(form.amount),
         fee=str(fee),
         method=form.method,
         fee_by=form.fee_by,
         terms=form.terms,
     )
     card = await form_msg.reply_text(
-        render_deal_card(deal_id, user.id, user.first_name, seller, buyer, form.amount, fee),
+        render_deal_card(deal_id, user.id, user.first_name, seller, buyer, amount, fee, form.amount),
         parse_mode=ParseMode.HTML,
     )
     db.set_card_msg(deal_id, card.message_id)

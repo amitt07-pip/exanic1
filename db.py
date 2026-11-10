@@ -23,6 +23,7 @@ _conn.executescript(
         buyer_id INTEGER,
         buyer_name TEXT,
         amount TEXT NOT NULL,
+        form_amount TEXT,
         fee TEXT NOT NULL,
         method TEXT,
         fee_by TEXT,
@@ -33,6 +34,8 @@ _conn.executescript(
     );
     """
 )
+if "form_amount" not in {r["name"] for r in _conn.execute("PRAGMA table_info(deals)")}:
+    _conn.execute("ALTER TABLE deals ADD COLUMN form_amount TEXT")
 _conn.commit()
 
 
