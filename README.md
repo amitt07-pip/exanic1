@@ -13,6 +13,10 @@ cp exanic.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now exanic
 ```
 
+## Groups
+
+The bot ignores every group except `CHAT_GROUP_ID` (default -1004482395935) and `ESCROW_GROUP_IDS`. Deal commands (`/add`, `/close`) only work in `ESCROW_GROUP_IDS`, never in the chat group.
+
 ## Commands (escrowers in ADMIN_IDS)
 
 - `/add [received amount]` — reply to a deal form (amount optional; defaults to the form amount):

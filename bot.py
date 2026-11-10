@@ -7,11 +7,13 @@ from typing import Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler, filters,
+)
 
 import db
 import userbot
-from config import ADMIN_IDS, BIO_TAG, BOT_TOKEN, FEE_WITH_TAG, FEE_WITHOUT_TAG
+from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, BOT_TOKEN, ESCROW_GROUP_IDS, FEE_WITH_TAG, FEE_WITHOUT_TAG
 from form import fmt_amount, parse_form, parse_number
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
@@ -42,6 +44,12 @@ _BIO_TAG_RE = re.compile(rf"(?<!\w){re.escape(BIO_TAG)}(?!\w)", re.IGNORECASE)
 
 def is_admin(user_id: Optional[int]) -> bool:
     return user_id in ADMIN_IDS
+
+
+async def only_allowed_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    if chat and chat.type != "private" and chat.id not in ALLOWED_GROUP_IDS:
+        raise ApplicationHandlerStop
 
 
 def profile_link(user_id: int, name: str) -> str:
@@ -243,8 +251,10 @@ def main() -> None:
         .post_shutdown(post_shutdown)
         .build()
     )
-    app.add_handler(CommandHandler("add", add_cmd))
-    app.add_handler(CommandHandler("close", close_cmd))
+    escrow_groups = filters.Chat(ESCROW_GROUP_IDS)
+    app.add_handler(TypeHandler(Update, only_allowed_groups), group=-1)
+    app.add_handler(CommandHandler("add", add_cmd, filters=escrow_groups))
+    app.add_handler(CommandHandler("close", close_cmd, filters=escrow_groups))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
