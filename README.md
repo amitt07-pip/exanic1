@@ -28,4 +28,4 @@ Terms - optional
 
 Fee is $1.00 when both seller and buyer have `@exanic` in their bio, otherwise $2.00.
 
-The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund to seller) buttons, usable by escrowers only; each deal can be closed once.
+The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund to seller) buttons, Close can only be tapped by the seller and Cancel only by the buyer; each deal can be closed once.

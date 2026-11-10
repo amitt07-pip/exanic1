@@ -95,13 +95,11 @@ def render_confirmed(deal, action: str) -> str:
 
 async def deal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    if not is_admin(query.from_user.id):
-        await query.answer()
-        return
     _, action, deal_id = query.data.split(":", 2)
     deal = db.get_deal(deal_id)
-    if not deal:
-        await query.answer("Deal not found.", show_alert=True)
+    allowed_id = deal and (deal["seller_id"] if action == "release" else deal["buyer_id"])
+    if not deal or query.from_user.id != allowed_id:
+        await query.answer()
         return
     if not db.finish_deal(deal_id, "released" if action == "release" else "refunded", query.from_user.id):
         await query.answer(f"Deal already {db.get_deal(deal_id)['status']}.", show_alert=True)
