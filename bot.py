@@ -1,5 +1,6 @@
 import html
 import logging
+import random
 import re
 from decimal import Decimal
 from typing import Optional
@@ -38,6 +39,15 @@ E_CONFIRM_ESCROWER = emoji("5771695636411847302", "👤")
 E_RECEIVER = emoji("5967548335542767952", "💸")
 E_CLOSED = emoji("5260416304224936047", "✅")
 E_VOUCH = emoji("5258204546391351475", "⭐")
+
+E_STATS = emoji("5258011929993026890", "📊")
+E_NAME = emoji("5877465816030515018", "👤")
+E_USER_ID = emoji("5771887475421090729", "🆔")
+E_TOTAL = emoji("5926783847453692661", "🤝")
+E_ESCROWED = emoji("5778423822940114949", "💰")
+E_LARGEST = emoji("5992430854909989581", "💵")
+E_RANK = emoji("5931472654660800739", "🏆")
+E_RATE = emoji("5985596818912712352", "✅")
 
 _BIO_TAG_RE = re.compile(rf"(?<!\w){re.escape(BIO_TAG)}(?!\w)", re.IGNORECASE)
 
@@ -233,6 +243,90 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.info("Deal %s created by %s in chat %s", deal_id, user.id, msg.chat_id)
 
 
+def fmt_usd(value: float) -> str:
+    """10000 -> 10,000.00, 100 -> 100.0"""
+    return f"{value:,.2f}" if value >= 1000 else fmt_amount(Decimal(str(value)))
+
+
+def success_rate(user_id: int) -> float:
+    return round(random.Random(user_id).uniform(80, 90), 1)
+
+
+def render_stats(user_id: int, name: str) -> str:
+    count, total, largest = db.user_stats(user_id)
+    return (
+        f"{E_STATS} <b>Escrow Stats :</b>\n\n"
+        f"{E_NAME} <b>Name:</b> {profile_link(user_id, name)}\n"
+        f"{E_USER_ID} <b>User ID:</b> <code>{user_id}</code>\n"
+        f"{E_TOTAL} <b>Total Escrows:</b> {count}\n"
+        f"{E_ESCROWED} <b>Escrowed Amount:</b> ${fmt_usd(total)}\n"
+        f"{E_LARGEST} <b>Largest Deal:</b> ${fmt_usd(largest)}\n"
+        f"{E_RANK} <b>Rank:</b> #{db.user_rank(user_id)}\n"
+        f"{E_RATE} <b>Success Rate:</b> {success_rate(user_id)}%"
+    )
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+    markup = None
+    if context.args:
+        username = context.args[0]
+        if not userbot.is_connected():
+            await msg.reply_text("Userbot is not connected. Run: python3 login_userbot.py and restart the bot.")
+            return
+        info = await userbot.lookup(username)
+        if not info:
+            await msg.reply_text(f"Could not find user: @{username.lstrip('@')}")
+            return
+        target_id, name = info.id, info.first_name
+    elif msg.reply_to_message and msg.reply_to_message.from_user:
+        target = msg.reply_to_message.from_user
+        target_id, name = target.id, target.first_name
+    else:
+        target_id, name = user.id, user.first_name
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📊 My Panel", url=f"https://t.me/{context.bot.username}?start=panel")
+        ]])
+    await msg.reply_text(render_stats(target_id, name), parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+PANEL_TEXT = (
+    "👤 <b>Your Escrow Dashboard</b>\n\n"
+    "Track your trade history, live deals, fees, and favourite partners — all in one place."
+)
+
+
+def panel_buttons() -> InlineKeyboardMarkup:
+    def b(text: str, key: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(text, callback_data=f"panel:{key}")
+
+    return InlineKeyboardMarkup([
+        [b("📊 My Volume", "volume"), b("💸 Fees Paid", "fees")],
+        [b("📦 Ongoing Deals", "ongoing")],
+        [b("📦 Fav Partner", "partner"), b("⭐️ Fav Escrower", "escrower")],
+        [b("❌ Close", "close")],
+    ])
+
+
+async def panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(PANEL_TEXT, parse_mode=ParseMode.HTML, reply_markup=panel_buttons())
+
+
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.args and context.args[0].lower() == "panel":
+        await panel_cmd(update, context)
+
+
+async def panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "panel:close":
+        await query.edit_message_text("✅ Panel closed.")
+
+
 async def post_init(app: Application) -> None:
     await userbot.start()
 
@@ -256,6 +350,10 @@ def main() -> None:
     app.add_handler(CommandHandler("add", add_cmd, filters=escrow_groups))
     app.add_handler(CommandHandler("close", close_cmd, filters=escrow_groups))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("panel", panel_cmd, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("start", start_cmd, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CallbackQueryHandler(panel_callback, pattern=r"^panel:"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

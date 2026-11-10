@@ -108,3 +108,24 @@ def complete_deal(deal_id: str, admin_id: int) -> bool:
             (admin_id, int(time.time()), deal_id),
         )
     return cur.rowcount == 1
+
+
+def user_stats(user_id: int) -> tuple[int, float, float]:
+    """(completed deal count, total amount, largest amount) for a user as seller or buyer."""
+    row = _conn.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(CAST(amount AS REAL)), 0) AS total, "
+        "COALESCE(MAX(CAST(amount AS REAL)), 0) AS largest FROM deals "
+        "WHERE status = 'completed' AND (seller_id = ? OR buyer_id = ?)",
+        (user_id, user_id),
+    ).fetchone()
+    return row["n"], row["total"], row["largest"]
+
+
+def user_rank(user_id: int) -> int:
+    totals: dict[int, float] = {}
+    for row in _conn.execute("SELECT seller_id, buyer_id, amount FROM deals WHERE status = 'completed'"):
+        for uid in {row["seller_id"], row["buyer_id"]}:
+            if uid:
+                totals[uid] = totals.get(uid, 0.0) + float(row["amount"])
+    mine = totals.get(user_id, 0.0)
+    return 1 + sum(1 for uid, total in totals.items() if uid != user_id and total > mine)
