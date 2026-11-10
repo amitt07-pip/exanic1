@@ -15,7 +15,7 @@ def _ids(value: str) -> set[int]:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_IDS = _ids(os.getenv("ADMIN_IDS", ""))
 CHAT_GROUP_ID = int(os.getenv("CHAT_GROUP_ID", "") or -1004482395935)
-ESCROW_GROUP_IDS = _ids(os.getenv("ESCROW_GROUP_IDS", ""))
+ESCROW_GROUP_IDS = _ids(os.getenv("ESCROW_GROUP_IDS", "") or "-1004341809670,-1004422790680")
 ALLOWED_GROUP_IDS = ESCROW_GROUP_IDS | {CHAT_GROUP_ID}
 DEAL_ID_PREFIX = "SH"
 DEAL_ID_START = int(os.getenv("DEAL_ID_START", "") or 65303)
