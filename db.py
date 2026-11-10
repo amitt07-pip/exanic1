@@ -30,12 +30,16 @@ _conn.executescript(
         terms TEXT,
         status TEXT NOT NULL DEFAULT 'active',
         created_at INTEGER NOT NULL,
+        closed_by INTEGER,
+        closed_at INTEGER,
         UNIQUE (chat_id, form_msg_id)
     );
     """
 )
-if "form_amount" not in {r["name"] for r in _conn.execute("PRAGMA table_info(deals)")}:
-    _conn.execute("ALTER TABLE deals ADD COLUMN form_amount TEXT")
+_deal_cols = {r["name"] for r in _conn.execute("PRAGMA table_info(deals)")}
+for _col, _type in (("form_amount", "TEXT"), ("closed_by", "INTEGER"), ("closed_at", "INTEGER")):
+    if _col not in _deal_cols:
+        _conn.execute(f"ALTER TABLE deals ADD COLUMN {_col} {_type}")
 _conn.commit()
 
 
@@ -60,3 +64,17 @@ def create_deal(**fields) -> str:
 def set_card_msg(deal_id: str, card_msg_id: int) -> None:
     _conn.execute("UPDATE deals SET card_msg_id = ? WHERE deal_id = ?", (card_msg_id, deal_id))
     _conn.commit()
+
+
+def get_deal(deal_id: str) -> Optional[sqlite3.Row]:
+    return _conn.execute("SELECT * FROM deals WHERE deal_id = ?", (deal_id,)).fetchone()
+
+
+def finish_deal(deal_id: str, status: str, admin_id: int) -> bool:
+    """Mark an active deal released/refunded; False if it was already finished."""
+    with _conn:
+        cur = _conn.execute(
+            "UPDATE deals SET status = ?, closed_by = ?, closed_at = ? WHERE deal_id = ? AND status = 'active'",
+            (status, admin_id, int(time.time()), deal_id),
+        )
+    return cur.rowcount == 1

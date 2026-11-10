@@ -4,9 +4,10 @@ import re
 from decimal import Decimal
 from typing import Optional
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.error import TelegramError
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 import db
 import userbot
@@ -30,6 +31,9 @@ E_AMOUNT = emoji("5992430854909989581", "💵")
 E_FEES = emoji("5913702317667913862", "💰")
 E_RELEASE = emoji("5985596818912712352", "📤")
 E_CUT = emoji("6007895992760799065", "✂️")
+E_CONFIRMED = emoji("5942678061127306511", "✅")
+E_CONFIRM_ESCROWER = emoji("5771695636411847302", "👤")
+E_RECEIVER = emoji("5967548335542767952", "💸")
 
 _BIO_TAG_RE = re.compile(rf"(?<!\w){re.escape(BIO_TAG)}(?!\w)", re.IGNORECASE)
 
@@ -67,6 +71,48 @@ def render_deal_card(
     if amount < form_amount:
         text += f"\n\n{E_CUT} Cut ${form_amount - amount:.2f} from ${fmt_amount(form_amount)}."
     return text
+
+
+def deal_buttons(deal_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Close", callback_data=f"deal:release:{deal_id}"),
+        InlineKeyboardButton("🛑 Cancel", callback_data=f"deal:refund:{deal_id}"),
+    ]])
+
+
+def render_confirmed(deal, action: str) -> str:
+    title, role, username = (
+        ("Release", "Buyer", deal["buyer_username"]) if action == "release"
+        else ("Refund", "Seller", deal["seller_username"])
+    )
+    return (
+        f"{E_CONFIRMED} <b>{title} CONFIRMED!</b>\n\n"
+        f"{E_ID} <b>Deal ID</b> - <code>{deal['deal_id']}</code>\n"
+        f"{E_CONFIRM_ESCROWER} <b>Escrower</b> : {profile_link(deal['escrower_id'], deal['escrower_name'])}\n\n"
+        f"{E_RECEIVER} <b>{role}</b> : @{html.escape(username)} - receive your funds."
+    )
+
+
+async def deal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        await query.answer()
+        return
+    _, action, deal_id = query.data.split(":", 2)
+    deal = db.get_deal(deal_id)
+    if not deal:
+        await query.answer("Deal not found.", show_alert=True)
+        return
+    if not db.finish_deal(deal_id, "released" if action == "release" else "refunded", query.from_user.id):
+        await query.answer(f"Deal already {db.get_deal(deal_id)['status']}.", show_alert=True)
+        return
+    await query.answer()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except TelegramError as exc:
+        log.info("Could not remove buttons for %s: %s", deal_id, exc)
+    await query.message.reply_text(render_confirmed(deal, action), parse_mode=ParseMode.HTML)
+    log.info("Deal %s %s by %s", deal_id, action, query.from_user.id)
 
 
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -137,6 +183,7 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     card = await form_msg.reply_text(
         render_deal_card(deal_id, user.id, user.first_name, seller, buyer, amount, fee, form.amount),
         parse_mode=ParseMode.HTML,
+        reply_markup=deal_buttons(deal_id),
     )
     db.set_card_msg(deal_id, card.message_id)
     log.info("Deal %s created by %s in chat %s", deal_id, user.id, msg.chat_id)
@@ -161,6 +208,7 @@ def main() -> None:
         .build()
     )
     app.add_handler(CommandHandler("add", add_cmd))
+    app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
