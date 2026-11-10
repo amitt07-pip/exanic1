@@ -1,0 +1,12 @@
+[Unit]
+Description=Exanic escrow bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/root/exanic1
+ExecStart=/usr/bin/python3 /root/exanic1/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
