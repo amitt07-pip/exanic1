@@ -38,6 +38,16 @@ _conn.executescript(
         closed_at INTEGER,
         UNIQUE (chat_id, form_msg_id)
     );
+    CREATE TABLE IF NOT EXISTS cloned_stats (
+        user_id INTEGER PRIMARY KEY,
+        total INTEGER NOT NULL,
+        worth REAL NOT NULL,
+        largest REAL NOT NULL,
+        rank INTEGER NOT NULL,
+        rate REAL NOT NULL,
+        cloned_by INTEGER,
+        cloned_at INTEGER NOT NULL
+    );
     """
 )
 _deal_cols = {r["name"] for r in _conn.execute("PRAGMA table_info(deals)")}
@@ -110,22 +120,45 @@ def complete_deal(deal_id: str, admin_id: int) -> bool:
     return cur.rowcount == 1
 
 
-def user_stats(user_id: int) -> tuple[int, float, float]:
-    """(completed deal count, total amount, largest amount) for a user as seller or buyer."""
-    row = _conn.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(CAST(amount AS REAL)), 0) AS total, "
-        "COALESCE(MAX(CAST(amount AS REAL)), 0) AS largest FROM deals "
-        "WHERE status = 'completed' AND (seller_id = ? OR buyer_id = ?)",
-        (user_id, user_id),
-    ).fetchone()
-    return row["n"], row["total"], row["largest"]
+def save_cloned_stats(user_id: int, values: dict, admin_id: int) -> None:
+    _conn.execute(
+        "INSERT OR REPLACE INTO cloned_stats (user_id, total, worth, largest, rank, rate, cloned_by, cloned_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, values["total"], values["worth"], values["largest"], values["rank"], values["rate"],
+         admin_id, int(time.time())),
+    )
+    _conn.commit()
 
 
-def user_rank(user_id: int) -> int:
-    totals: dict[int, float] = {}
-    for row in _conn.execute("SELECT seller_id, buyer_id, amount FROM deals WHERE status = 'completed'"):
+def _completed_totals() -> tuple[dict[int, list], dict[int, sqlite3.Row]]:
+    """user_id -> [count, worth, largest]; cloned stats are the base, plus deals closed after cloning."""
+    clones = {r["user_id"]: r for r in _conn.execute("SELECT * FROM cloned_stats")}
+    totals = {uid: [c["total"], c["worth"], c["largest"]] for uid, c in clones.items()}
+    rows = _conn.execute(
+        "SELECT seller_id, buyer_id, amount, closed_at FROM deals WHERE status = 'completed'"
+    ).fetchall()
+    for row in rows:
         for uid in {row["seller_id"], row["buyer_id"]}:
-            if uid:
-                totals[uid] = totals.get(uid, 0.0) + float(row["amount"])
-    mine = totals.get(user_id, 0.0)
-    return 1 + sum(1 for uid, total in totals.items() if uid != user_id and total > mine)
+            if not uid or (uid in clones and (row["closed_at"] or 0) < clones[uid]["cloned_at"]):
+                continue
+            entry = totals.setdefault(uid, [0, 0.0, 0.0])
+            amount = float(row["amount"])
+            entry[0] += 1
+            entry[1] += amount
+            entry[2] = max(entry[2], amount)
+    return totals, clones
+
+
+def user_stats(user_id: int) -> dict:
+    """count, total, largest, rank, rate (rate is None unless cloned)."""
+    totals, clones = _completed_totals()
+    count, worth, largest = totals.get(user_id, [0, 0.0, 0.0])
+    clone = clones.get(user_id)
+    if clone:
+        rank = clone["rank"]
+    else:
+        rank = 1 + sum(1 for uid, t in totals.items() if uid != user_id and t[1] > worth)
+    return {
+        "count": count, "total": worth, "largest": largest, "rank": rank,
+        "rate": clone["rate"] if clone else None,
+    }

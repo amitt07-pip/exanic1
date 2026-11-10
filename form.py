@@ -91,3 +91,38 @@ def fmt_amount(value: Decimal) -> str:
     """100 -> 100.0, 100.50 -> 100.5, 99.25 -> 99.25"""
     text = format(value.normalize(), "f")
     return text if "." in text else f"{text}.0"
+
+
+_STAT_SEP = r"\s*[:\-–—=]\s*"
+_STAT_NUM = r"\$?\s*([\d,]+(?:\.\d+)?)"
+_STAT_RES = {
+    "total": re.compile(rf"total\s*escrows?{_STAT_SEP}([\d,]+)", re.IGNORECASE),
+    "worth": re.compile(rf"escrowed\s*amount{_STAT_SEP}{_STAT_NUM}", re.IGNORECASE),
+    "largest": re.compile(rf"largest\s*deal{_STAT_SEP}{_STAT_NUM}", re.IGNORECASE),
+    "rank": re.compile(rf"rank{_STAT_SEP}#?\s*([\d,]+)", re.IGNORECASE),
+    "rate": re.compile(rf"success\s*rate{_STAT_SEP}(\d+(?:\.\d+)?)", re.IGNORECASE),
+}
+STAT_LABELS = {
+    "total": "Total Escrows", "worth": "Escrowed Amount", "largest": "Largest Deal",
+    "rank": "Rank", "rate": "Success Rate",
+}
+
+
+def parse_stats(text: Optional[str]) -> tuple[dict, list[str]]:
+    """Returns (values, missing/invalid labels)."""
+    found: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        for key, rx in _STAT_RES.items():
+            if key not in found:
+                m = rx.search(line)
+                if m:
+                    found[key] = m.group(1).replace(",", "")
+    values: dict = {}
+    for key, raw in found.items():
+        values[key] = int(raw) if key in ("total", "rank") else float(raw)
+    bad = [label for key, label in STAT_LABELS.items() if key not in values]
+    if values.get("rank", 1) < 1:
+        bad.append(STAT_LABELS["rank"])
+    if values.get("rate", 0) > 100:
+        bad.append(STAT_LABELS["rate"])
+    return values, bad

@@ -9,13 +9,14 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
-    Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler, filters,
+    Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler,
+    filters,
 )
 
 import db
 import userbot
-from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, BOT_TOKEN, ESCROW_GROUP_IDS, FEE_WITH_TAG, FEE_WITHOUT_TAG
-from form import fmt_amount, parse_form, parse_number
+from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, FEE_WITH_TAG, FEE_WITHOUT_TAG
+from form import fmt_amount, parse_form, parse_number, parse_stats
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -253,16 +254,17 @@ def success_rate(user_id: int) -> float:
 
 
 def render_stats(user_id: int, name: str) -> str:
-    count, total, largest = db.user_stats(user_id)
+    st = db.user_stats(user_id)
+    rate = st["rate"] if st["rate"] is not None else success_rate(user_id)
     return (
         f"{E_STATS} <b>Escrow Stats :</b>\n\n"
         f"{E_NAME} <b>Name:</b> {profile_link(user_id, name)}\n"
         f"{E_USER_ID} <b>User ID:</b> <code>{user_id}</code>\n"
-        f"{E_TOTAL} <b>Total Escrows:</b> {count}\n"
-        f"{E_ESCROWED} <b>Escrowed Amount:</b> ${fmt_usd(total)}\n"
-        f"{E_LARGEST} <b>Largest Deal:</b> ${fmt_usd(largest)}\n"
-        f"{E_RANK} <b>Rank:</b> #{db.user_rank(user_id)}\n"
-        f"{E_RATE} <b>Success Rate:</b> {success_rate(user_id)}%"
+        f"{E_TOTAL} <b>Total Escrows:</b> {st['count']}\n"
+        f"{E_ESCROWED} <b>Escrowed Amount:</b> ${fmt_usd(st['total'])}\n"
+        f"{E_LARGEST} <b>Largest Deal:</b> ${fmt_usd(st['largest'])}\n"
+        f"{E_RANK} <b>Rank:</b> #{st['rank']}\n"
+        f"{E_RATE} <b>Success Rate:</b> {rate:.1f}%"
     )
 
 
@@ -291,6 +293,77 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             InlineKeyboardButton("📊 My Panel", url=f"https://t.me/{context.bot.username}?start=panel")
         ]])
     await msg.reply_text(render_stats(target_id, name), parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+CLONE_TEMPLATE = (
+    "Total Escrows: \n"
+    "Escrowed Amount: $\n"
+    "Largest Deal: $\n"
+    "Rank: #\n"
+    "Success Rate: %"
+)
+
+
+async def target_from_args(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[tuple[int, str]]:
+    """(user_id, first name) from @username / user id argument or the replied-to message."""
+    msg = update.effective_message
+    if context.args:
+        arg = context.args[0]
+        if arg.lstrip("-").isdigit():
+            user_id = int(arg)
+            try:
+                chat = await context.bot.get_chat(user_id)
+                return user_id, chat.first_name or str(user_id)
+            except TelegramError:
+                return user_id, str(user_id)
+        if not userbot.is_connected():
+            await msg.reply_text("Userbot is not connected. Run: python3 login_userbot.py and restart the bot.")
+            return None
+        info = await userbot.lookup(arg)
+        if not info:
+            await msg.reply_text(f"Could not find user: @{arg.lstrip('@')}")
+            return None
+        return info.id, info.first_name
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target = msg.reply_to_message.from_user
+        return target.id, target.first_name
+    await msg.reply_text("Usage: /clonestats @username | user id, or reply to the user")
+    return None
+
+
+async def clonestats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    target = await target_from_args(update, context)
+    if not target:
+        return
+    context.bot_data.setdefault("clone_pending", {})[(msg.chat_id, user.id)] = target
+    await msg.reply_text(
+        f"Send the new stats for {profile_link(*target)} [<code>{target[0]}</code>] in this format:\n\n"
+        f"<code>{CLONE_TEMPLATE}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def clonestats_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    pending = context.bot_data.get("clone_pending", {})
+    target = pending.get((msg.chat_id, user.id))
+    if not target:
+        return
+    values, bad = parse_stats(msg.text)
+    if bad:
+        await msg.reply_text("Missing or invalid: " + ", ".join(bad) + "\nSend the stats again.")
+        return
+    pending.pop((msg.chat_id, user.id), None)
+    db.save_cloned_stats(target[0], values, user.id)
+    await msg.reply_text(render_stats(*target), parse_mode=ParseMode.HTML)
+    log.info("Stats for %s cloned by %s", target[0], user.id)
 
 
 PANEL_TEXT = (
@@ -350,10 +423,12 @@ def main() -> None:
     app.add_handler(CommandHandler("add", add_cmd, filters=escrow_groups))
     app.add_handler(CommandHandler("close", close_cmd, filters=escrow_groups))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
-    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd, filters=filters.Chat(CHAT_GROUP_ID)))
     app.add_handler(CommandHandler("panel", panel_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("start", start_cmd, filters=filters.ChatType.PRIVATE))
     app.add_handler(CallbackQueryHandler(panel_callback, pattern=r"^panel:"))
+    app.add_handler(CommandHandler(["clonestats", "clonestat"], clonestats_cmd))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, clonestats_text))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
