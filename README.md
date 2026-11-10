@@ -29,3 +29,5 @@ Terms - optional
 Fee is $1.00 when both seller and buyer have `@exanic` in their bio, otherwise $2.00.
 
 The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund to seller) buttons, Close can only be tapped by the seller and Cancel only by the buyer; each deal can be closed once.
+
+- `/close` — the escrower who started the deal replies to the deal card (or the CONFIRMED message) after release/refund is confirmed; the bot deletes the command, marks the deal completed and asks both parties to vouch. The bot needs *Delete messages* admin rights.

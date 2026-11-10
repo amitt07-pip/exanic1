@@ -34,6 +34,8 @@ E_CUT = emoji("6007895992760799065", "✂️")
 E_CONFIRMED = emoji("5942678061127306511", "✅")
 E_CONFIRM_ESCROWER = emoji("5771695636411847302", "👤")
 E_RECEIVER = emoji("5967548335542767952", "💸")
+E_CLOSED = emoji("5260416304224936047", "✅")
+E_VOUCH = emoji("5258204546391351475", "⭐")
 
 _BIO_TAG_RE = re.compile(rf"(?<!\w){re.escape(BIO_TAG)}(?!\w)", re.IGNORECASE)
 
@@ -102,15 +104,51 @@ async def deal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.answer()
         return
     if not db.finish_deal(deal_id, "released" if action == "release" else "refunded", query.from_user.id):
-        await query.answer(f"Deal already {db.get_deal(deal_id)['status']}.", show_alert=True)
+        await query.answer(f"Deal already {db.get_deal(deal_id)['result']}.", show_alert=True)
         return
     await query.answer()
     try:
         await query.edit_message_reply_markup(reply_markup=None)
     except TelegramError as exc:
         log.info("Could not remove buttons for %s: %s", deal_id, exc)
-    await query.message.reply_text(render_confirmed(deal, action), parse_mode=ParseMode.HTML)
+    sent = await query.message.reply_text(render_confirmed(deal, action), parse_mode=ParseMode.HTML)
+    db.set_confirm_msg(deal_id, sent.message_id)
     log.info("Deal %s %s by %s", deal_id, action, query.from_user.id)
+
+
+def render_completed(deal) -> str:
+    vouch = f"Vouch @Exanic for ${fmt_amount(Decimal(deal['amount']))} deal, safely escrowed."
+    return (
+        f"{E_CLOSED} <b>Deal</b> <code>{deal['deal_id']}</code> <b>has been closed!</b>\n"
+        f"~ {profile_link(deal['buyer_id'], deal['buyer_name'])} and "
+        f"{profile_link(deal['seller_id'], deal['seller_name'])} are requested to drop the vouch before leaving.\n\n"
+        f"{E_VOUCH} <code>{html.escape(vouch)}</code>"
+    )
+
+
+async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    target = msg.reply_to_message
+    deal = db.deal_for_message(msg.chat_id, target.message_id) if target else None
+    if not deal or deal["escrower_id"] != user.id:
+        return
+    if deal["status"] == "active":
+        await msg.reply_text("Seller/Buyer must confirm release or refund first.")
+        return
+    if not db.complete_deal(deal["deal_id"], user.id):
+        await msg.reply_text(
+            f"Deal <code>{deal['deal_id']}</code> is already closed.", parse_mode=ParseMode.HTML
+        )
+        return
+    try:
+        await msg.delete()
+    except TelegramError as exc:
+        log.info("Could not delete /close message: %s", exc)
+    await target.reply_text(render_completed(deal), parse_mode=ParseMode.HTML)
+    log.info("Deal %s completed by %s", deal["deal_id"], user.id)
 
 
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -206,6 +244,7 @@ def main() -> None:
         .build()
     )
     app.add_handler(CommandHandler("add", add_cmd))
+    app.add_handler(CommandHandler("close", close_cmd))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

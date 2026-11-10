@@ -30,6 +30,10 @@ _conn.executescript(
         terms TEXT,
         status TEXT NOT NULL DEFAULT 'active',
         created_at INTEGER NOT NULL,
+        confirmed_by INTEGER,
+        confirmed_at INTEGER,
+        confirm_msg_id INTEGER,
+        result TEXT,
         closed_by INTEGER,
         closed_at INTEGER,
         UNIQUE (chat_id, form_msg_id)
@@ -37,7 +41,10 @@ _conn.executescript(
     """
 )
 _deal_cols = {r["name"] for r in _conn.execute("PRAGMA table_info(deals)")}
-for _col, _type in (("form_amount", "TEXT"), ("closed_by", "INTEGER"), ("closed_at", "INTEGER")):
+for _col, _type in (
+    ("form_amount", "TEXT"), ("confirmed_by", "INTEGER"), ("confirmed_at", "INTEGER"),
+    ("confirm_msg_id", "INTEGER"), ("result", "TEXT"), ("closed_by", "INTEGER"), ("closed_at", "INTEGER"),
+):
     if _col not in _deal_cols:
         _conn.execute(f"ALTER TABLE deals ADD COLUMN {_col} {_type}")
 _conn.commit()
@@ -70,11 +77,34 @@ def get_deal(deal_id: str) -> Optional[sqlite3.Row]:
     return _conn.execute("SELECT * FROM deals WHERE deal_id = ?", (deal_id,)).fetchone()
 
 
-def finish_deal(deal_id: str, status: str, admin_id: int) -> bool:
-    """Mark an active deal released/refunded; False if it was already finished."""
+def finish_deal(deal_id: str, result: str, user_id: int) -> bool:
+    """Mark an active deal released/refunded; False if it was already confirmed."""
     with _conn:
         cur = _conn.execute(
-            "UPDATE deals SET status = ?, closed_by = ?, closed_at = ? WHERE deal_id = ? AND status = 'active'",
-            (status, admin_id, int(time.time()), deal_id),
+            "UPDATE deals SET status = 'confirmed', result = ?, confirmed_by = ?, confirmed_at = ? "
+            "WHERE deal_id = ? AND status = 'active'",
+            (result, user_id, int(time.time()), deal_id),
+        )
+    return cur.rowcount == 1
+
+
+def set_confirm_msg(deal_id: str, msg_id: int) -> None:
+    _conn.execute("UPDATE deals SET confirm_msg_id = ? WHERE deal_id = ?", (msg_id, deal_id))
+    _conn.commit()
+
+
+def deal_for_message(chat_id: int, msg_id: int) -> Optional[sqlite3.Row]:
+    return _conn.execute(
+        "SELECT * FROM deals WHERE chat_id = ? AND ? IN (card_msg_id, confirm_msg_id, form_msg_id)",
+        (chat_id, msg_id),
+    ).fetchone()
+
+
+def complete_deal(deal_id: str, admin_id: int) -> bool:
+    with _conn:
+        cur = _conn.execute(
+            "UPDATE deals SET status = 'completed', closed_by = ?, closed_at = ? "
+            "WHERE deal_id = ? AND status = 'confirmed'",
+            (admin_id, int(time.time()), deal_id),
         )
     return cur.rowcount == 1
