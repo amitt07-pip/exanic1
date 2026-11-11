@@ -38,3 +38,4 @@ The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund t
 - `/stats`, `/stats @username`, or reply `/stats` — anyone, chat group only; shows completed-deal stats. Own `/stats` has a **📊 My Panel** button that opens `/panel` in the bot DM.
 - `/panel` (DM only) — escrow dashboard; only ❌ Close works for now.
 - `/clonestats @username | user id`, or reply `/clonestats` (admins only) — bot asks for the stats format; the sent values replace that user's `/stats` (deals completed afterwards are added on top).
+- Address tracking — after Close/Cancel is confirmed, when the deal's buyer or seller sends a wallet address / UPI ID in the escrow group, the bot replies **✅ Address Tracked** with a per-address count (first time random 30–40, then +1 each time) and a **📋 PREVIOUS OCCURRENCES** button that disappears when the sender taps it.

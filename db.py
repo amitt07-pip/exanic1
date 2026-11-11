@@ -38,6 +38,12 @@ _conn.executescript(
         closed_at INTEGER,
         UNIQUE (chat_id, form_msg_id)
     );
+    CREATE TABLE IF NOT EXISTS tracked_addresses (
+        address TEXT PRIMARY KEY,
+        count INTEGER NOT NULL,
+        first_user_id INTEGER,
+        updated_at INTEGER
+    );
     CREATE TABLE IF NOT EXISTS cloned_stats (
         user_id INTEGER PRIMARY KEY,
         total INTEGER NOT NULL,
@@ -162,3 +168,23 @@ def user_stats(user_id: int) -> dict:
         "count": count, "total": worth, "largest": largest, "rank": rank,
         "rate": clone["rate"] if clone else None,
     }
+
+
+def confirmed_deal_for_party(chat_id: int, user_id: int) -> Optional[sqlite3.Row]:
+    return _conn.execute(
+        "SELECT * FROM deals WHERE chat_id = ? AND status = 'confirmed' AND ? IN (seller_id, buyer_id) "
+        "ORDER BY num DESC LIMIT 1",
+        (chat_id, user_id),
+    ).fetchone()
+
+
+def track_address(address: str, user_id: int, initial: int) -> int:
+    """First sighting starts at `initial`; every later one adds 1. Returns the new count."""
+    with _conn:
+        _conn.execute(
+            "INSERT INTO tracked_addresses (address, count, first_user_id, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(address) DO UPDATE SET count = count + 1, updated_at = excluded.updated_at",
+            (address, initial, user_id, int(time.time())),
+        )
+        row = _conn.execute("SELECT count FROM tracked_addresses WHERE address = ?", (address,)).fetchone()
+    return row["count"]

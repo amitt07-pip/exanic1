@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+import addresses
 import db
 import userbot
 from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, FEE_WITH_TAG, FEE_WITHOUT_TAG
@@ -366,6 +367,38 @@ async def clonestats_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     log.info("Stats for %s cloned by %s", target[0], user.id)
 
 
+async def address_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+    address = addresses.find_address(msg.text)
+    if not address or not db.confirmed_deal_for_party(msg.chat_id, user.id):
+        return
+    count = db.track_address(addresses.normalize(address), user.id, random.randint(30, 40))
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 PREVIOUS OCCURRENCES", callback_data=f"occ:{user.id}")
+    ]])
+    await msg.reply_text(
+        f"✅ <b>Address Tracked</b>\n\n"
+        f"Address: <code>{html.escape(address)}</code>\n"
+        f"Total Count: {count}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup,
+    )
+
+
+async def occurrences_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if str(query.from_user.id) != query.data.split(":", 1)[1]:
+        return
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except TelegramError as exc:
+        log.info("Could not remove occurrences button: %s", exc)
+
+
 PANEL_TEXT = (
     "👤 <b>Your Escrow Dashboard</b>\n\n"
     "Track your trade history, live deals, fees, and favourite partners — all in one place."
@@ -429,6 +462,8 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(panel_callback, pattern=r"^panel:"))
     app.add_handler(CommandHandler(["clonestats", "clonestat"], clonestats_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, clonestats_text))
+    app.add_handler(MessageHandler(escrow_groups & filters.TEXT & ~filters.COMMAND, address_text), group=1)
+    app.add_handler(CallbackQueryHandler(occurrences_callback, pattern=r"^occ:"))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
