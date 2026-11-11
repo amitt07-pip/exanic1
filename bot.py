@@ -6,17 +6,17 @@ from decimal import Decimal
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
-    Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler,
+    Application, ApplicationHandlerStop, CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler,
     filters,
 )
 
 import addresses
 import db
 import userbot
-from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, FEE_WITH_TAG, FEE_WITHOUT_TAG
+from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, JOIN_LOG_CHAT_ID, FEE_WITH_TAG, FEE_WITHOUT_TAG
 from form import fmt_amount, parse_form, parse_number, parse_stats
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
@@ -399,6 +399,39 @@ async def occurrences_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         log.info("Could not remove occurrences button: %s", exc)
 
 
+def _is_present(member) -> bool:
+    if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
+        return False
+    if member.status == ChatMemberStatus.RESTRICTED:
+        return bool(getattr(member, "is_member", False))
+    return True
+
+
+def user_tag(u) -> str:
+    if u.username:
+        return f"@{html.escape(u.username)}"
+    return profile_link(u.id, u.full_name or str(u.id))
+
+
+async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cmu = update.chat_member
+    if not cmu or cmu.chat.id != CHAT_GROUP_ID:
+        return
+    if _is_present(cmu.old_chat_member) or not _is_present(cmu.new_chat_member):
+        return
+    user, actor = cmu.new_chat_member.user, cmu.from_user
+    if user.is_bot:
+        return
+    text = (
+        f"~ {user_tag(user)} (<code>{user.id}</code>) has been added by "
+        f"{user_tag(actor)} (<code>{actor.id}</code>) in the <b>strawHats</b> Group ‼️"
+    )
+    try:
+        await context.bot.send_message(JOIN_LOG_CHAT_ID, text, parse_mode=ParseMode.HTML)
+    except TelegramError as exc:
+        log.warning("Join notice for %s failed: %s", user.id, exc)
+
+
 PANEL_TEXT = (
     "👤 <b>Your Escrow Dashboard</b>\n\n"
     "Track your trade history, live deals, fees, and favourite partners — all in one place."
@@ -453,6 +486,7 @@ def main() -> None:
     )
     escrow_groups = filters.Chat(ESCROW_GROUP_IDS)
     app.add_handler(TypeHandler(Update, only_allowed_groups), group=-1)
+    app.add_handler(ChatMemberHandler(chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CommandHandler("add", add_cmd, filters=escrow_groups))
     app.add_handler(CommandHandler("close", close_cmd, filters=escrow_groups))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))

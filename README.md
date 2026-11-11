@@ -39,3 +39,4 @@ The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund t
 - `/panel` (DM only) — escrow dashboard; only ❌ Close works for now.
 - `/clonestats @username | user id`, or reply `/clonestats` (admins only) — bot asks for the stats format; the sent values replace that user's `/stats` (deals completed afterwards are added on top).
 - Address tracking — after Close/Cancel is confirmed, when the deal's buyer or seller sends a wallet address / UPI ID in the escrow group, the bot replies **✅ Address Tracked** with a per-address count (first time random 30–40, then +1 each time) and a **📋 PREVIOUS OCCURRENCES** button that disappears when the sender taps it.
+- Join notices — when someone joins the chat group, the bot posts `~ @user (id) has been added by @actor (id) in the strawHats Group ‼️` to `JOIN_LOG_CHAT_ID` (default -1004422716732). The bot must be admin in the chat group and able to post in the log chat.
