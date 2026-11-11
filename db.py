@@ -44,6 +44,13 @@ _conn.executescript(
         first_user_id INTEGER,
         updated_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS join_notices (
+        user_id INTEGER PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        msg_id INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        created_at INTEGER
+    );
     CREATE TABLE IF NOT EXISTS cloned_stats (
         user_id INTEGER PRIMARY KEY,
         total INTEGER NOT NULL,
@@ -188,3 +195,18 @@ def track_address(address: str, user_id: int, initial: int) -> int:
         )
         row = _conn.execute("SELECT count FROM tracked_addresses WHERE address = ?", (address,)).fetchone()
     return row["count"]
+
+
+def save_join_notice(user_id: int, chat_id: int, msg_id: int, text: str) -> None:
+    _conn.execute(
+        "INSERT OR REPLACE INTO join_notices (user_id, chat_id, msg_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, chat_id, msg_id, text, int(time.time())),
+    )
+    _conn.commit()
+
+
+def pop_join_notice(user_id: int) -> Optional[sqlite3.Row]:
+    with _conn:
+        row = _conn.execute("SELECT * FROM join_notices WHERE user_id = ?", (user_id,)).fetchone()
+        _conn.execute("DELETE FROM join_notices WHERE user_id = ?", (user_id,))
+    return row

@@ -417,19 +417,32 @@ async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
     cmu = update.chat_member
     if not cmu or cmu.chat.id != CHAT_GROUP_ID:
         return
-    if _is_present(cmu.old_chat_member) or not _is_present(cmu.new_chat_member):
-        return
+    was, now = _is_present(cmu.old_chat_member), _is_present(cmu.new_chat_member)
     user, actor = cmu.new_chat_member.user, cmu.from_user
-    if user.is_bot:
+    if user.is_bot or was == now:
         return
-    text = (
-        f"~ {user_tag(user)} (<code>{user.id}</code>) has been added by "
-        f"{user_tag(actor)} (<code>{actor.id}</code>) in the <b>strawHats</b> Group ‼️"
-    )
+    if now:
+        text = (
+            f"~ {user_tag(user)} (<code>{user.id}</code>) has been added by "
+            f"{user_tag(actor)} (<code>{actor.id}</code>) in the <b>strawHats</b> Group ‼️"
+        )
+        try:
+            sent = await context.bot.send_message(JOIN_LOG_CHAT_ID, text, parse_mode=ParseMode.HTML)
+        except TelegramError as exc:
+            log.warning("Join notice for %s failed: %s", user.id, exc)
+            return
+        db.save_join_notice(user.id, JOIN_LOG_CHAT_ID, sent.message_id, text)
+        return
+    notice = db.pop_join_notice(user.id)
+    if not notice:
+        return
     try:
-        await context.bot.send_message(JOIN_LOG_CHAT_ID, text, parse_mode=ParseMode.HTML)
+        await context.bot.edit_message_text(
+            f"<s>{notice['text']}</s>", chat_id=notice["chat_id"], message_id=notice["msg_id"],
+            parse_mode=ParseMode.HTML,
+        )
     except TelegramError as exc:
-        log.warning("Join notice for %s failed: %s", user.id, exc)
+        log.warning("Strike join notice for %s failed: %s", user.id, exc)
 
 
 PANEL_TEXT = (
