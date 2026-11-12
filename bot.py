@@ -1,4 +1,5 @@
 import html
+import json
 import logging
 import random
 import re
@@ -545,6 +546,31 @@ async def verify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 _FILTER_MEDIA = ("photo", "video", "animation", "document", "audio", "voice", "sticker")
 
 
+_BUTTON_RE = re.compile(r"\[([^\]\n]+)\]\(buttonurl:(?://)?([^)\s]+?)(:same)?\)")
+
+
+def _extract_buttons(text_html: str) -> tuple[str, list[list[dict]]]:
+    """Strip Rose-style [Label](buttonurl://link[:same]) from the text and return button rows."""
+    rows: list[list[dict]] = []
+    for label, url, same in _BUTTON_RE.findall(text_html):
+        url = html.unescape(url)
+        if not re.match(r"^(https?|tg)://", url):
+            url = "https://" + url
+        button = {"text": html.unescape(re.sub(r"<[^>]+>", "", label)).strip(), "url": url}
+        if same and rows:
+            rows[-1].append(button)
+        else:
+            rows.append([button])
+    return _BUTTON_RE.sub("", text_html).strip(), rows
+
+
+def _filter_markup(buttons: Optional[str]) -> Optional[InlineKeyboardMarkup]:
+    rows = json.loads(buttons) if buttons else []
+    if not rows:
+        return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton(b["text"], url=b["url"]) for b in row] for row in rows])
+
+
 def _split_keyword(rest: str) -> tuple[str, str]:
     """('keyword', remainder) from 'kw reply...' or '"multi word" reply...'."""
     rest = rest.lstrip()
@@ -578,7 +604,8 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not keyword:
         await msg.reply_text(
             "Usage: /filter <keyword> <reply>\n"
-            'or reply to a message with /filter <keyword>. Use "quotes" for multi-word keywords.'
+            'or reply to a message with /filter <keyword>. Use "quotes" for multi-word keywords.\n'
+            "Buttons: [Text](buttonurl://link) — add :same before ) to keep it on the same row."
         )
         return
     reply = None
@@ -592,7 +619,12 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not reply:
         await msg.reply_text("Give the filter a reply: text after the keyword, or reply to a message.")
         return
-    db.save_filter(CHAT_GROUP_ID, keyword.lower(), *reply, user.id)
+    kind, body, file_id = reply
+    body, rows = _extract_buttons(body)
+    if kind == "text" and not body:
+        await msg.reply_text("A text filter needs some text besides the buttons.")
+        return
+    db.save_filter(CHAT_GROUP_ID, keyword.lower(), kind, body, file_id, json.dumps(rows) if rows else None, user.id)
     await msg.reply_text(f"Saved filter <code>{html.escape(keyword.lower())}</code>.", parse_mode=ParseMode.HTML)
 
 
@@ -659,14 +691,15 @@ async def filter_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not row:
         return
     text = _fill(row["text"], update.effective_user) or None
+    markup = _filter_markup(row["buttons"])
     try:
         if row["kind"] == "text":
-            await msg.reply_text(text, parse_mode=ParseMode.HTML)
+            await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         elif row["kind"] == "sticker":
-            await msg.reply_sticker(row["file_id"])
+            await msg.reply_sticker(row["file_id"], reply_markup=markup)
         else:
             send = getattr(msg, f"reply_{row['kind']}")
-            await send(row["file_id"], caption=text, parse_mode=ParseMode.HTML)
+            await send(row["file_id"], caption=text, parse_mode=ParseMode.HTML, reply_markup=markup)
     except TelegramError as exc:
         log.warning("Filter %r in %s failed: %s", row["keyword"], msg.chat_id, exc)
 

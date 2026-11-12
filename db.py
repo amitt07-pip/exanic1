@@ -65,6 +65,7 @@ _conn.executescript(
         kind TEXT NOT NULL,
         text TEXT,
         file_id TEXT,
+        buttons TEXT,
         added_by INTEGER,
         added_at INTEGER,
         PRIMARY KEY (chat_id, keyword)
@@ -88,6 +89,8 @@ for _col, _type in (
 ):
     if _col not in _deal_cols:
         _conn.execute(f"ALTER TABLE deals ADD COLUMN {_col} {_type}")
+if "buttons" not in {r["name"] for r in _conn.execute("PRAGMA table_info(chat_filters)")}:
+    _conn.execute("ALTER TABLE chat_filters ADD COLUMN buttons TEXT")
 _conn.commit()
 
 
@@ -243,11 +246,13 @@ def escrower_for_address(address: str) -> Optional[sqlite3.Row]:
     return _conn.execute("SELECT * FROM escrower_addresses WHERE address = ?", (address,)).fetchone()
 
 
-def save_filter(chat_id: int, keyword: str, kind: str, text: str, file_id: Optional[str], user_id: int) -> None:
+def save_filter(
+    chat_id: int, keyword: str, kind: str, text: str, file_id: Optional[str], buttons: Optional[str], user_id: int
+) -> None:
     _conn.execute(
-        "INSERT OR REPLACE INTO chat_filters (chat_id, keyword, kind, text, file_id, added_by, added_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (chat_id, keyword, kind, text, file_id, user_id, int(time.time())),
+        "INSERT OR REPLACE INTO chat_filters (chat_id, keyword, kind, text, file_id, buttons, added_by, added_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (chat_id, keyword, kind, text, file_id, buttons, user_id, int(time.time())),
     )
     _conn.commit()
 
