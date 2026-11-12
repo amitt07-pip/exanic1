@@ -449,6 +449,10 @@ E_VERIFY = emoji("5805532930662996322", "🛡")
 E_VERIFY_ADDR = emoji("5868494449687925457", "📍")
 E_VERIFY_OWNER = emoji("5879770735999717115", "👤")
 E_VERIFY_SAFE = emoji("5416050517279265929", "✅")
+E_UNVERIFIED = emoji("6008233706039284019", "⚠️")
+E_NOT_LINKED = emoji("5778527486270770928", "❌")
+E_DONT_SEND = emoji("5881702736843511327", "🚫")
+E_SCAM = emoji("6269266558271361090", "🚨")
 
 ADDY_NETWORKS = {"BEP20": "BSC (BEP20)", "TRC20": "TRX (TRC20)"}
 
@@ -521,7 +525,11 @@ async def verify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     row = db.escrower_for_address(addresses.normalize(address))
     if not row:
         await msg.reply_text(
-            f"❌ <b>Address does not belong to any escrower</b>\n\n<code>{html.escape(address)}</code>",
+            f"{E_UNVERIFIED} <b>WARNING: Unverified Address</b>\n\n"
+            f"<code>{html.escape(address)}</code>\n\n"
+            f"{E_NOT_LINKED} This address is NOT linked to any escrower.\n"
+            f"{E_DONT_SEND} Do NOT send funds unless you trust the user.\n"
+            f"{E_SCAM} High risk of scam.",
             parse_mode=ParseMode.HTML,
         )
         return
