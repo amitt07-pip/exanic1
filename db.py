@@ -51,6 +51,14 @@ _conn.executescript(
         text TEXT NOT NULL,
         created_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS escrower_addresses (
+        address TEXT PRIMARY KEY,
+        escrower_id INTEGER NOT NULL,
+        escrower_name TEXT,
+        token TEXT NOT NULL,
+        network TEXT NOT NULL,
+        saved_at INTEGER
+    );
     CREATE TABLE IF NOT EXISTS cloned_stats (
         user_id INTEGER PRIMARY KEY,
         total INTEGER NOT NULL,
@@ -210,3 +218,16 @@ def pop_join_notice(user_id: int) -> Optional[sqlite3.Row]:
         row = _conn.execute("SELECT * FROM join_notices WHERE user_id = ?", (user_id,)).fetchone()
         _conn.execute("DELETE FROM join_notices WHERE user_id = ?", (user_id,))
     return row
+
+
+def save_escrower_address(address: str, escrower_id: int, name: str, token: str, network: str) -> None:
+    _conn.execute(
+        "INSERT OR REPLACE INTO escrower_addresses (address, escrower_id, escrower_name, token, network, saved_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (address, escrower_id, name, token, network, int(time.time())),
+    )
+    _conn.commit()
+
+
+def escrower_for_address(address: str) -> Optional[sqlite3.Row]:
+    return _conn.execute("SELECT * FROM escrower_addresses WHERE address = ?", (address,)).fetchone()

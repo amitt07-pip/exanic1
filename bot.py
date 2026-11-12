@@ -445,6 +445,95 @@ async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
         log.warning("Strike join notice for %s failed: %s", user.id, exc)
 
 
+E_VERIFY = emoji("5805532930662996322", "🛡")
+E_VERIFY_ADDR = emoji("5868494449687925457", "📍")
+E_VERIFY_OWNER = emoji("5879770735999717115", "👤")
+E_VERIFY_SAFE = emoji("5416050517279265929", "✅")
+
+ADDY_NETWORKS = {"BEP20": "BSC (BEP20)", "TRC20": "TRX (TRC20)"}
+
+
+async def setupaddy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    context.bot_data.setdefault("addy_pending", {}).pop((msg.chat_id, user.id), None)
+    await msg.reply_text(
+        "Select token:",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("USDT", callback_data=f"addy:token:USDT:{user.id}")
+        ]]),
+    )
+
+
+async def setupaddy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    _, step, value, owner = query.data.split(":", 3)
+    if str(query.from_user.id) != owner or not is_admin(query.from_user.id):
+        await query.answer()
+        return
+    await query.answer()
+    if step == "token":
+        await query.edit_message_text(
+            f"Token: {value}\nSelect network:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(label, callback_data=f"addy:net:{net}:{owner}")
+                for net, label in ADDY_NETWORKS.items()
+            ]]),
+        )
+    elif step == "net" and value in ADDY_NETWORKS:
+        context.bot_data.setdefault("addy_pending", {})[(query.message.chat_id, query.from_user.id)] = value
+        await query.edit_message_text(f"Token: USDT\nNetwork: {ADDY_NETWORKS[value]}\n\nSend your address now.")
+
+
+async def setupaddy_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    pending = context.bot_data.get("addy_pending", {})
+    network = pending.get((msg.chat_id, user.id))
+    if not network:
+        return
+    address = (msg.text or "").strip().strip("`")
+    if not addresses.NETWORK_PATTERNS[network].fullmatch(address):
+        await msg.reply_text(f"That is not a valid USDT {ADDY_NETWORKS[network]} address. Send it again.")
+        return
+    pending.pop((msg.chat_id, user.id), None)
+    db.save_escrower_address(addresses.normalize(address), user.id, user.first_name, "USDT", network)
+    await msg.reply_text(
+        f"✅ Saved USDT {ADDY_NETWORKS[network]} address:\n<code>{html.escape(address)}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+    log.info("Escrower %s saved %s address", user.id, network)
+
+
+async def verify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    if not msg:
+        return
+    raw = context.args[0] if context.args else (msg.reply_to_message.text if msg.reply_to_message else "")
+    address = (raw or "").strip().strip("`")
+    if not address:
+        await msg.reply_text("Usage: /verify <address>")
+        return
+    row = db.escrower_for_address(addresses.normalize(address))
+    if not row:
+        await msg.reply_text(
+            f"❌ <b>Address does not belong to any escrower</b>\n\n<code>{html.escape(address)}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await msg.reply_text(
+        f"{E_VERIFY} <b>Address Belongs to Escrower</b>\n\n"
+        f"{E_VERIFY_ADDR} <b>Address:</b> <code>{html.escape(address)}</code>\n"
+        f"{E_VERIFY_OWNER} <b>Belongs to:</b> {profile_link(row['escrower_id'], row['escrower_name'] or str(row['escrower_id']))}\n\n"
+        f"{E_VERIFY_SAFE}Safe to proceed.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 PANEL_TEXT = (
     "👤 <b>Your Escrow Dashboard</b>\n\n"
     "Track your trade history, live deals, fees, and favourite partners — all in one place."
@@ -511,6 +600,10 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, clonestats_text))
     app.add_handler(MessageHandler(escrow_groups & filters.TEXT & ~filters.COMMAND, address_text), group=1)
     app.add_handler(CallbackQueryHandler(occurrences_callback, pattern=r"^occ:"))
+    app.add_handler(CommandHandler("setupaddy", setupaddy_cmd))
+    app.add_handler(CallbackQueryHandler(setupaddy_callback, pattern=r"^addy:"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, setupaddy_text), group=2)
+    app.add_handler(CommandHandler("verify", verify_cmd))
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

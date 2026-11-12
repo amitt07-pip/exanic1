@@ -25,3 +25,9 @@ def find_address(text: Optional[str]) -> Optional[str]:
 
 def normalize(address: str) -> str:
     return address.lower() if address.startswith("0x") or "@" in address else address
+
+
+NETWORK_PATTERNS = {
+    "BEP20": _PATTERNS[0],
+    "TRC20": _PATTERNS[1],
+}
