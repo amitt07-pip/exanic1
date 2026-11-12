@@ -592,7 +592,7 @@ async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not reply:
         await msg.reply_text("Give the filter a reply: text after the keyword, or reply to a message.")
         return
-    db.save_filter(msg.chat_id, keyword.lower(), *reply, user.id)
+    db.save_filter(CHAT_GROUP_ID, keyword.lower(), *reply, user.id)
     await msg.reply_text(f"Saved filter <code>{html.escape(keyword.lower())}</code>.", parse_mode=ParseMode.HTML)
 
 
@@ -601,12 +601,12 @@ async def filters_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     if not msg or not user or not is_admin(user.id):
         return
-    rows = db.chat_filters(msg.chat_id)
+    rows = db.chat_filters(CHAT_GROUP_ID)
     if not rows:
-        await msg.reply_text("No filters in this chat.")
+        await msg.reply_text("No filters set for the chat group.")
         return
     lines = "\n".join(f"- <code>{html.escape(r['keyword'])}</code>" for r in rows)
-    await msg.reply_text(f"<b>Filters in this chat:</b>\n{lines}", parse_mode=ParseMode.HTML)
+    await msg.reply_text(f"<b>Chat group filters:</b>\n{lines}", parse_mode=ParseMode.HTML)
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -619,7 +619,7 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not keyword:
         await msg.reply_text("Usage: /stop <keyword>")
         return
-    if db.delete_filter(msg.chat_id, keyword.lower()):
+    if db.delete_filter(CHAT_GROUP_ID, keyword.lower()):
         await msg.reply_text(f"Stopped filter <code>{html.escape(keyword.lower())}</code>.", parse_mode=ParseMode.HTML)
     else:
         await msg.reply_text("No such filter. Use /filters to see them.")
@@ -630,8 +630,8 @@ async def stopall_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     if not msg or not user or not is_admin(user.id):
         return
-    count = db.delete_all_filters(msg.chat_id)
-    await msg.reply_text(f"Removed {count} filter(s) from this chat.")
+    count = db.delete_all_filters(CHAT_GROUP_ID)
+    await msg.reply_text(f"Removed {count} filter(s) from the chat group.")
 
 
 def _fill(template: str, user) -> str:
@@ -741,11 +741,17 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(setupaddy_callback, pattern=r"^addy:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, setupaddy_text), group=2)
     app.add_handler(CommandHandler("verify", verify_cmd))
-    app.add_handler(CommandHandler("filter", filter_cmd))
-    app.add_handler(CommandHandler("filters", filters_cmd))
-    app.add_handler(CommandHandler("stop", stop_cmd))
-    app.add_handler(CommandHandler("stopall", stopall_cmd))
-    app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, filter_trigger), group=3)
+    dm = filters.ChatType.PRIVATE
+    app.add_handler(CommandHandler("filter", filter_cmd, filters=dm))
+    app.add_handler(CommandHandler("filters", filters_cmd, filters=dm))
+    app.add_handler(CommandHandler("stop", stop_cmd, filters=dm))
+    app.add_handler(CommandHandler("stopall", stopall_cmd, filters=dm))
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(CHAT_GROUP_ID) & (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, filter_trigger
+        ),
+        group=3,
+    )
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
