@@ -59,6 +59,16 @@ _conn.executescript(
         network TEXT NOT NULL,
         saved_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS chat_filters (
+        chat_id INTEGER NOT NULL,
+        keyword TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT,
+        file_id TEXT,
+        added_by INTEGER,
+        added_at INTEGER,
+        PRIMARY KEY (chat_id, keyword)
+    );
     CREATE TABLE IF NOT EXISTS cloned_stats (
         user_id INTEGER PRIMARY KEY,
         total INTEGER NOT NULL,
@@ -231,3 +241,30 @@ def save_escrower_address(address: str, escrower_id: int, name: str, token: str,
 
 def escrower_for_address(address: str) -> Optional[sqlite3.Row]:
     return _conn.execute("SELECT * FROM escrower_addresses WHERE address = ?", (address,)).fetchone()
+
+
+def save_filter(chat_id: int, keyword: str, kind: str, text: str, file_id: Optional[str], user_id: int) -> None:
+    _conn.execute(
+        "INSERT OR REPLACE INTO chat_filters (chat_id, keyword, kind, text, file_id, added_by, added_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (chat_id, keyword, kind, text, file_id, user_id, int(time.time())),
+    )
+    _conn.commit()
+
+
+def chat_filters(chat_id: int) -> list[sqlite3.Row]:
+    return _conn.execute(
+        "SELECT * FROM chat_filters WHERE chat_id = ? ORDER BY keyword", (chat_id,)
+    ).fetchall()
+
+
+def delete_filter(chat_id: int, keyword: str) -> bool:
+    with _conn:
+        cur = _conn.execute("DELETE FROM chat_filters WHERE chat_id = ? AND keyword = ?", (chat_id, keyword))
+    return cur.rowcount > 0
+
+
+def delete_all_filters(chat_id: int) -> int:
+    with _conn:
+        cur = _conn.execute("DELETE FROM chat_filters WHERE chat_id = ?", (chat_id,))
+    return cur.rowcount

@@ -542,6 +542,135 @@ async def verify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+_FILTER_MEDIA = ("photo", "video", "animation", "document", "audio", "voice", "sticker")
+
+
+def _split_keyword(rest: str) -> tuple[str, str]:
+    """('keyword', remainder) from 'kw reply...' or '"multi word" reply...'."""
+    rest = rest.lstrip()
+    if rest.startswith('"') and '"' in rest[1:]:
+        end = rest.index('"', 1)
+        return rest[1:end].strip(), rest[end + 1:]
+    parts = rest.split(None, 1)
+    return (parts[0] if parts else ""), (parts[1] if len(parts) > 1 else "")
+
+
+def _filter_reply_from(message) -> Optional[tuple[str, str, Optional[str]]]:
+    """(kind, html text/caption, file_id) for a replied-to message."""
+    for kind in _FILTER_MEDIA:
+        media = getattr(message, kind)
+        if media:
+            file_id = media[-1].file_id if kind == "photo" else media.file_id
+            return kind, message.caption_html or "", file_id
+    if message.text:
+        return "text", message.text_html, None
+    return None
+
+
+async def filter_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    text = msg.text or ""
+    cmd_end = len(text.split(None, 1)[0])
+    keyword, remainder = _split_keyword(text[cmd_end:])
+    if not keyword:
+        await msg.reply_text(
+            "Usage: /filter <keyword> <reply>\n"
+            'or reply to a message with /filter <keyword>. Use "quotes" for multi-word keywords.'
+        )
+        return
+    reply = None
+    if remainder.strip():
+        prefix = html.escape(text[: len(text) - len(remainder)])
+        body_html = msg.text_html
+        body = body_html[len(prefix):] if body_html.startswith(prefix) else html.escape(remainder)
+        reply = ("text", body.strip(), None)
+    elif msg.reply_to_message:
+        reply = _filter_reply_from(msg.reply_to_message)
+    if not reply:
+        await msg.reply_text("Give the filter a reply: text after the keyword, or reply to a message.")
+        return
+    db.save_filter(msg.chat_id, keyword.lower(), *reply, user.id)
+    await msg.reply_text(f"Saved filter <code>{html.escape(keyword.lower())}</code>.", parse_mode=ParseMode.HTML)
+
+
+async def filters_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    rows = db.chat_filters(msg.chat_id)
+    if not rows:
+        await msg.reply_text("No filters in this chat.")
+        return
+    lines = "\n".join(f"- <code>{html.escape(r['keyword'])}</code>" for r in rows)
+    await msg.reply_text(f"<b>Filters in this chat:</b>\n{lines}", parse_mode=ParseMode.HTML)
+
+
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    text = msg.text or ""
+    keyword, _ = _split_keyword(text[len(text.split(None, 1)[0]):])
+    if not keyword:
+        await msg.reply_text("Usage: /stop <keyword>")
+        return
+    if db.delete_filter(msg.chat_id, keyword.lower()):
+        await msg.reply_text(f"Stopped filter <code>{html.escape(keyword.lower())}</code>.", parse_mode=ParseMode.HTML)
+    else:
+        await msg.reply_text("No such filter. Use /filters to see them.")
+
+
+async def stopall_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user or not is_admin(user.id):
+        return
+    count = db.delete_all_filters(msg.chat_id)
+    await msg.reply_text(f"Removed {count} filter(s) from this chat.")
+
+
+def _fill(template: str, user) -> str:
+    if not template or not user:
+        return template
+    first = html.escape(user.first_name or "")
+    return (
+        template.replace("{first}", first)
+        .replace("{id}", str(user.id))
+        .replace("{username}", f"@{html.escape(user.username)}" if user.username else first)
+        .replace("{mention}", profile_link(user.id, user.first_name or str(user.id)))
+    )
+
+
+async def filter_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    content = (msg.text or msg.caption or "") if msg else ""
+    if not content:
+        return
+    rows = sorted(db.chat_filters(msg.chat_id), key=lambda r: len(r["keyword"]), reverse=True)
+    row = next(
+        (r for r in rows if re.search(rf"(?<!\w){re.escape(r['keyword'])}(?!\w)", content, re.IGNORECASE)),
+        None,
+    )
+    if not row:
+        return
+    text = _fill(row["text"], update.effective_user) or None
+    try:
+        if row["kind"] == "text":
+            await msg.reply_text(text, parse_mode=ParseMode.HTML)
+        elif row["kind"] == "sticker":
+            await msg.reply_sticker(row["file_id"])
+        else:
+            send = getattr(msg, f"reply_{row['kind']}")
+            await send(row["file_id"], caption=text, parse_mode=ParseMode.HTML)
+    except TelegramError as exc:
+        log.warning("Filter %r in %s failed: %s", row["keyword"], msg.chat_id, exc)
+
+
 PANEL_TEXT = (
     "👤 <b>Your Escrow Dashboard</b>\n\n"
     "Track your trade history, live deals, fees, and favourite partners — all in one place."
@@ -612,6 +741,11 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(setupaddy_callback, pattern=r"^addy:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, setupaddy_text), group=2)
     app.add_handler(CommandHandler("verify", verify_cmd))
+    app.add_handler(CommandHandler("filter", filter_cmd))
+    app.add_handler(CommandHandler("filters", filters_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
+    app.add_handler(CommandHandler("stopall", stopall_cmd))
+    app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, filter_trigger), group=3)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
