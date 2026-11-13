@@ -793,7 +793,7 @@ def main() -> None:
         group=3,
     )
     app.add_error_handler(on_error)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=-1)
 
 
 if __name__ == "__main__":
