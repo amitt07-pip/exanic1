@@ -738,6 +738,11 @@ async def panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args and context.args[0].lower() == "panel":
         await panel_cmd(update, context)
+        return
+    await update.effective_message.reply_text(
+        "👋 <b>Welcome to strawHats Escrow</b>\n\nUse /panel to open your escrow dashboard.",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
