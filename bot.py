@@ -8,7 +8,7 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatMemberStatus, ParseMode
-from telegram.error import TelegramError
+from telegram.error import NetworkError, TelegramError
 from telegram.ext import (
     Application, ApplicationHandlerStop, CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler,
     filters,
@@ -738,6 +738,13 @@ async def panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("✅ Panel closed.")
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, NetworkError):
+        log.warning("Telegram network error (will retry): %s", context.error)
+        return
+    log.error("Unhandled error", exc_info=context.error)
+
+
 async def post_init(app: Application) -> None:
     await userbot.start()
 
@@ -785,6 +792,7 @@ def main() -> None:
         ),
         group=3,
     )
+    app.add_error_handler(on_error)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
