@@ -61,7 +61,16 @@ def is_admin(user_id: Optional[int]) -> bool:
 
 async def only_allowed_groups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
-    if chat and chat.type != "private" and chat.id not in ALLOWED_GROUP_IDS:
+    user = update.effective_user
+    msg = update.effective_message
+    ignored = bool(chat and chat.type != "private" and chat.id not in ALLOWED_GROUP_IDS)
+    log.info(
+        "Update chat=%s user=%s text=%r%s",
+        chat.id if chat else None, user.id if user else None,
+        ((msg.text or msg.caption or "")[:40] if msg else (update.callback_query.data if update.callback_query else "")),
+        " IGNORED (chat not in CHAT_GROUP_ID/ESCROW_GROUP_IDS)" if ignored else "",
+    )
+    if ignored:
         raise ApplicationHandlerStop
 
 
@@ -746,6 +755,10 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def post_init(app: Application) -> None:
+    log.info(
+        "Bot @%s | chat group %s | escrow groups %s | admins %s",
+        app.bot.username, CHAT_GROUP_ID, sorted(ESCROW_GROUP_IDS), sorted(ADMIN_IDS),
+    )
     await userbot.start()
 
 
