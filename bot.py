@@ -3,7 +3,7 @@ import json
 import logging
 import random
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -17,7 +17,7 @@ from telegram.ext import (
 import addresses
 import db
 import userbot
-from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, JOIN_LOG_CHAT_ID, FEE_WITH_TAG, FEE_WITHOUT_TAG
+from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, JOIN_LOG_CHAT_ID, GROUP_FEE_RULES
 from form import fmt_amount, parse_form, parse_number, parse_stats
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
@@ -82,8 +82,15 @@ def has_bio_tag(bio: str) -> bool:
     return bool(_BIO_TAG_RE.search(bio or ""))
 
 
-def deal_fee(seller: userbot.UserInfo, buyer: userbot.UserInfo) -> Decimal:
-    return FEE_WITH_TAG if has_bio_tag(seller.bio) and has_bio_tag(buyer.bio) else FEE_WITHOUT_TAG
+def deal_fee(chat_id: int, amount: Decimal, seller: userbot.UserInfo, buyer: userbot.UserInfo) -> Decimal:
+    rule = GROUP_FEE_RULES[chat_id]
+    if not (has_bio_tag(seller.bio) and has_bio_tag(buyer.bio)):
+        fee = amount * rule["pct_no_tag"]
+    elif amount <= rule["cap"]:
+        fee = rule["per_person"] * 2
+    else:
+        fee = amount * rule["pct_per_person"] * 2
+    return fee.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def render_deal_card(
@@ -222,8 +229,8 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text("Could not find user: " + ", ".join(unresolved))
         return
 
-    fee = deal_fee(seller, buyer)
     amount = received if received is not None else form.amount
+    fee = deal_fee(msg.chat_id, amount, seller, buyer)
     if amount <= fee:
         await msg.reply_text(f"Amount must be more than the ${fee:.2f} fee.")
         return

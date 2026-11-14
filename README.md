@@ -30,7 +30,12 @@ Amount in $ - 100
 Terms - optional
 ```
 
-Fee is $1.00 when both seller and buyer have `@exanic` in their bio, otherwise $2.00.
+Fees (on the received amount; group 1 / group 2 = first / second `ESCROW_GROUP_IDS`):
+
+| | Both bios have `@exanic` | Otherwise |
+|---|---|---|
+| Group 1 | $0.50 per person ($1.00 total) up to $1,500; above that 0.05% per person | 0.5% total |
+| Group 2 | $1.00 per person ($2.00 total) up to $2,000; above that 0.1% per person | 1% total |
 
 The deal card has **✅ Close** (release to buyer) and **🛑 Cancel** (refund to seller) buttons, Close can only be tapped by the seller and Cancel only by the buyer; each deal can be closed once.
 
