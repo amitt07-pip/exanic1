@@ -284,7 +284,7 @@ async def mydeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     deals = db.active_deals_for_party(user.id)
     if not deals:
         await context.bot.send_message(
-            msg.chat_id, f"{profile_link(user.id, user.first_name)}, you have no active deals.",
+            msg.chat_id, f"{E_MYDEALS} <b>You have no active deals right now.</b>",
             parse_mode=ParseMode.HTML,
         )
         return
