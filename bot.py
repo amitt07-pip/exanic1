@@ -141,7 +141,7 @@ async def deal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.answer()
         return
     if not db.finish_deal(deal_id, "released" if action == "release" else "refunded", query.from_user.id):
-        await query.answer(f"Deal already {db.get_deal(deal_id)['result']}.", show_alert=True)
+        await query.answer(f"Deal already {db.get_deal(deal_id)['result'] or 'closed'}.", show_alert=True)
         return
     await query.answer()
     try:
@@ -183,9 +183,6 @@ async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         deal = db.deal_for_message(msg.chat_id, target.message_id) if target else None
     if not deal or deal["escrower_id"] != user.id:
         return
-    if deal["status"] == "active":
-        await msg.reply_text("Seller/Buyer must confirm release or refund first.")
-        return
     if not db.complete_deal(deal["deal_id"], user.id):
         await msg.reply_text(
             f"Deal <code>{deal['deal_id']}</code> is already closed.", parse_mode=ParseMode.HTML
@@ -195,6 +192,11 @@ async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.delete()
     except TelegramError as exc:
         log.info("Could not delete /close message: %s", exc)
+    if deal["status"] == "active" and deal["card_msg_id"]:
+        try:
+            await context.bot.edit_message_reply_markup(msg.chat_id, deal["card_msg_id"], reply_markup=None)
+        except TelegramError as exc:
+            log.info("Could not remove buttons for %s: %s", deal["deal_id"], exc)
     if target:
         await target.reply_text(render_completed(deal), parse_mode=ParseMode.HTML)
     else:

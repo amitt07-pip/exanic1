@@ -148,7 +148,7 @@ def complete_deal(deal_id: str, admin_id: int) -> bool:
     with _conn:
         cur = _conn.execute(
             "UPDATE deals SET status = 'completed', closed_by = ?, closed_at = ? "
-            "WHERE deal_id = ? AND status = 'confirmed'",
+            "WHERE deal_id = ? AND status IN ('active', 'confirmed')",
             (admin_id, int(time.time()), deal_id),
         )
     return cur.rowcount == 1
