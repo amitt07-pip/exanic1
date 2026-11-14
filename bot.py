@@ -6,7 +6,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
 from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import NetworkError, TelegramError
 from telegram.ext import (
@@ -17,7 +17,7 @@ from telegram.ext import (
 import addresses
 import db
 import userbot
-from config import ADMIN_IDS, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, JOIN_LOG_CHAT_ID, GROUP_FEE_RULES
+from config import ADMIN_IDS, DEAL_ID_PREFIX, ALLOWED_GROUP_IDS, BIO_TAG, CHAT_GROUP_ID, BOT_TOKEN, ESCROW_GROUP_IDS, JOIN_LOG_CHAT_ID, GROUP_FEE_RULES
 from form import fmt_amount, parse_form, parse_number, parse_stats
 
 logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s %(message)s", level=logging.INFO)
@@ -169,7 +169,18 @@ async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not msg or not user or not is_admin(user.id):
         return
     target = msg.reply_to_message
-    deal = db.deal_for_message(msg.chat_id, target.message_id) if target else None
+    if context.args:
+        num = context.args[0].upper().removeprefix(f"{DEAL_ID_PREFIX}-")
+        deal = db.get_deal(f"{DEAL_ID_PREFIX}-{num}")
+        if not deal or deal["chat_id"] != msg.chat_id:
+            await msg.reply_text(
+                f"Deal <code>{html.escape(context.args[0])}</code> not found in this group.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        target = None
+    else:
+        deal = db.deal_for_message(msg.chat_id, target.message_id) if target else None
     if not deal or deal["escrower_id"] != user.id:
         return
     if deal["status"] == "active":
@@ -184,7 +195,15 @@ async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.delete()
     except TelegramError as exc:
         log.info("Could not delete /close message: %s", exc)
-    await target.reply_text(render_completed(deal), parse_mode=ParseMode.HTML)
+    if target:
+        await target.reply_text(render_completed(deal), parse_mode=ParseMode.HTML)
+    else:
+        await context.bot.send_message(
+            msg.chat_id, render_completed(deal), parse_mode=ParseMode.HTML,
+            reply_parameters=ReplyParameters(
+                deal["confirm_msg_id"] or deal["card_msg_id"], allow_sending_without_reply=True
+            ),
+        )
     log.info("Deal %s completed by %s", deal["deal_id"], user.id)
 
 
