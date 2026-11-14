@@ -255,6 +255,53 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.info("Deal %s created by %s in chat %s", deal_id, user.id, msg.chat_id)
 
 
+E_MYDEALS = emoji("5877597667231534929", "📋")
+E_MYDEAL_ID = emoji("6262810286122601771", "🔗")
+E_MYDEAL_ROLE = emoji("6104975490739609129", "👤")
+
+
+def message_link(chat_id: int, msg_id: int) -> str:
+    internal = str(chat_id)[4:] if str(chat_id).startswith("-100") else str(abs(chat_id))
+    return f"https://t.me/c/{internal}/{msg_id}"
+
+
+async def mydeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+    try:
+        await msg.delete()
+    except TelegramError as exc:
+        log.info("Could not delete /mydeals message: %s", exc)
+    deals = db.active_deals_for_party(user.id)
+    if not deals:
+        await context.bot.send_message(
+            msg.chat_id, f"{profile_link(user.id, user.first_name)}, you have no active deals.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    lines, buttons = [], []
+    for deal in deals:
+        release = Decimal(deal["amount"]) - Decimal(deal["fee"])
+        role = "Seller" if deal["seller_id"] == user.id else "Buyer"
+        card = message_link(deal["chat_id"], deal["card_msg_id"] or deal["form_msg_id"])
+        lines.append(
+            f'{E_MYDEAL_ID} <a href="{card}">{deal["deal_id"]}</a> | {E_MYDEAL_ROLE} {role} | ${release:.2f}'
+        )
+        buttons.append([InlineKeyboardButton(
+            f"{deal['deal_id']} • 🏦 • ${fmt_amount(release)}",
+            url=message_link(deal["chat_id"], deal["form_msg_id"]),
+        )])
+    await context.bot.send_message(
+        msg.chat_id,
+        f"{E_MYDEALS} <b>Your Active Deals</b>\n\n" + "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        disable_web_page_preview=True,
+    )
+
+
 def fmt_usd(value: float) -> str:
     """10000 -> 10,000.00, 100 -> 100.0"""
     return f"{value:,.2f}" if value >= 1000 else fmt_amount(Decimal(str(value)))
@@ -786,6 +833,7 @@ def main() -> None:
     app.add_handler(ChatMemberHandler(chat_member_update, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CommandHandler("add", add_cmd, filters=escrow_groups))
     app.add_handler(CommandHandler("close", close_cmd, filters=escrow_groups))
+    app.add_handler(CommandHandler("mydeals", mydeals_cmd, filters=escrow_groups))
     app.add_handler(CallbackQueryHandler(deal_callback, pattern=r"^deal:(release|refund):"))
     app.add_handler(CommandHandler("stats", stats_cmd, filters=filters.Chat(CHAT_GROUP_ID)))
     app.add_handler(CommandHandler("panel", panel_cmd, filters=filters.ChatType.PRIVATE))
