@@ -281,7 +281,7 @@ async def mydeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await msg.delete()
     except TelegramError as exc:
         log.info("Could not delete /mydeals message: %s", exc)
-    deals = db.active_deals_for_party(user.id)
+    deals = db.active_deals_for_party(msg.chat_id, user.id)
     if not deals:
         await context.bot.send_message(
             msg.chat_id, f"{E_MYDEALS} <b>You have no active deals right now.</b>",

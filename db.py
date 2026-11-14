@@ -275,8 +275,9 @@ def delete_all_filters(chat_id: int) -> int:
     return cur.rowcount
 
 
-def active_deals_for_party(user_id: int) -> list[sqlite3.Row]:
+def active_deals_for_party(chat_id: int, user_id: int) -> list[sqlite3.Row]:
     return _conn.execute(
-        "SELECT * FROM deals WHERE status IN ('active', 'confirmed') AND ? IN (seller_id, buyer_id) ORDER BY num",
-        (user_id,),
+        "SELECT * FROM deals WHERE chat_id = ? AND status IN ('active', 'confirmed')"
+        " AND ? IN (seller_id, buyer_id) ORDER BY num",
+        (chat_id, user_id),
     ).fetchall()
