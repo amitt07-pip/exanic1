@@ -63,7 +63,9 @@ async def only_allowed_groups(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat = update.effective_chat
     user = update.effective_user
     msg = update.effective_message
-    ignored = bool(chat and chat.type != "private" and chat.id not in ALLOWED_GROUP_IDS)
+    query = update.callback_query
+    kick_in_log = bool(chat and chat.id == JOIN_LOG_CHAT_ID and query and (query.data or "").startswith("kick:"))
+    ignored = bool(chat and chat.type != "private" and chat.id not in ALLOWED_GROUP_IDS and not kick_in_log)
     log.info(
         "Update chat=%s user=%s text=%r%s",
         chat.id if chat else None, user.id if user else None,
@@ -512,7 +514,12 @@ async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"{user_tag(actor)} (<code>{actor.id}</code>) in the <b>strawHats</b> Group ‼️"
         )
         try:
-            sent = await context.bot.send_message(JOIN_LOG_CHAT_ID, text, parse_mode=ParseMode.HTML)
+            sent = await context.bot.send_message(
+                JOIN_LOG_CHAT_ID, text, parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚫 Kick", callback_data=f"kick:{user.id}:{actor.id}")
+                ]]),
+            )
         except TelegramError as exc:
             log.warning("Join notice for %s failed: %s", user.id, exc)
             return
@@ -528,6 +535,30 @@ async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
     except TelegramError as exc:
         log.warning("Strike join notice for %s failed: %s", user.id, exc)
+
+
+async def kick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    _, user_id, adder_id = query.data.split(":")
+    if query.from_user.id != int(adder_id):
+        await query.answer("Only the person who added this member can kick them.", show_alert=True)
+        return
+    user_id = int(user_id)
+    try:
+        await context.bot.ban_chat_member(CHAT_GROUP_ID, user_id)
+        await context.bot.unban_chat_member(CHAT_GROUP_ID, user_id, only_if_banned=True)
+    except TelegramError as exc:
+        log.warning("Kick %s by %s failed: %s", user_id, query.from_user.id, exc)
+        await query.answer(f"Could not kick: {exc.message}", show_alert=True)
+        return
+    await query.answer("Member kicked.")
+    log.info("User %s kicked from chat group by %s", user_id, query.from_user.id)
+    notice = db.pop_join_notice(user_id)
+    text = notice["text"] if notice and notice["msg_id"] == query.message.message_id else query.message.text_html
+    try:
+        await query.edit_message_text(f"<s>{text}</s>", parse_mode=ParseMode.HTML)
+    except TelegramError as exc:
+        log.info("Strike join notice for %s failed: %s", user_id, exc)
 
 
 E_VERIFY = emoji("5805532930662996322", "🛡")
@@ -873,6 +904,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(occurrences_callback, pattern=r"^occ:"))
     app.add_handler(CommandHandler("setupaddy", setupaddy_cmd))
     app.add_handler(CallbackQueryHandler(setupaddy_callback, pattern=r"^addy:"))
+    app.add_handler(CallbackQueryHandler(kick_callback, pattern=r"^kick:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, setupaddy_text), group=2)
     app.add_handler(CommandHandler("verify", verify_cmd))
     dm = filters.ChatType.PRIVATE
